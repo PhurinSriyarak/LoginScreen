@@ -16,20 +16,27 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   final TextEditingController _newPassController = TextEditingController();
 
   String? _generatedOtp;
+  DateTime? _otpIssuedAt;
   bool _otpSent = false;
   bool _showNewPasswordFields = false;
-  bool _isPasswordVisible = false; // สำหรับ toggle แสดง/ซ่อนรหัสผ่าน
+  bool _isPasswordVisible = false; // toggle แสดง/ซ่อนรหัสผ่าน
 
   // สร้าง OTP จำลอง (ในระบบจริงต้องส่งผ่าน SMS/Email)
   String _generateOtp() {
-    final rand = Random();
+    final rand = Random.secure(); // ปลอดภัยกว่า Random()
     return List.generate(6, (_) => rand.nextInt(10)).join();
   }
 
-  // ขั้นตอนขอ OTP: ตรวจสอบว่ามี username ไหม แล้ว "ส่ง" OTP
+  bool _isOtpExpired() {
+    if (_otpIssuedAt == null) return true;
+    final diff = DateTime.now().difference(_otpIssuedAt!);
+    return diff.inMinutes >= 5; // หมดอายุใน 5 นาที
+  }
+
   Future<void> _requestOtp() async {
     final username = _usernameController.text.trim();
     if (username.isEmpty) {
+      if (!mounted) return;
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('กรุณากรอกชื่อผู้ใช้งาน')));
@@ -37,6 +44,8 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     }
 
     final user = await UserStorage.getUserByUsername(username);
+    if (!mounted) return;
+
     if (user == null) {
       ScaffoldMessenger.of(
         context,
@@ -44,18 +53,17 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
       return;
     }
 
-    // สร้าง OTP และ "ส่ง" (ในตัวอย่างจะแสดงเป็น dialog เพื่อทดลอง)
+    // สร้าง OTP และ "ส่ง" (ตัวอย่าง: แสดงเป็น dialog เพื่อทดลอง)
     _generatedOtp = _generateOtp();
+    _otpIssuedAt = DateTime.now();
     _otpSent = true;
 
-    // แสดง OTP ใน dialog (สำหรับทดสอบเท่านั้น)
-    if (!mounted) return;
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('OTP จำลอง (เพื่อทดสอบ)'),
         content: Text(
-          'รหัส OTP ของคุณคือ: $_generatedOtp\n(ในระบบจริงจะส่งทาง SMS หรืออีเมล)',
+          'รหัส OTP ของคุณคือ: $_generatedOtp\n(ในระบบจริงจะส่งทาง SMS หรืออีเมล)\nหมดอายุใน 5 นาที',
         ),
         actions: [
           TextButton(
@@ -72,41 +80,54 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     );
   }
 
-  // ยืนยัน OTP และตั้งรหัสผ่านใหม่
   Future<void> _submitNewPassword() async {
     final username = _usernameController.text.trim();
     final otp = _otpController.text.trim();
     final newPass = _newPassController.text;
 
     if (username.isEmpty || otp.isEmpty || newPass.isEmpty) {
+      if (!mounted) return;
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('กรุณากรอกข้อมูลให้ครบ')));
       return;
     }
 
-    if (!_otpSent || _generatedOtp == null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('กรุณาขอ OTP ก่อน')));
+    if (!_otpSent || _generatedOtp == null || _isOtpExpired()) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('OTP ไม่ถูกต้องหรือหมดอายุ กรุณาขอใหม่')),
+      );
       return;
     }
 
     if (otp != _generatedOtp) {
+      if (!mounted) return;
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('รหัส OTP ไม่ถูกต้อง')));
       return;
     }
 
-    // ถ้า OTP ถูก ให้ hash รหัสผ่านใหม่แล้วบันทึกลง storage
+    // OTP ถูกต้อง → hash รหัสผ่านใหม่แล้วบันทึกลง storage
     final newHash = AuthService.hashPassword(newPass);
     final ok = await UserStorage.resetPassword(username, newHash);
+
+    if (!mounted) return;
+
     if (ok) {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('เปลี่ยนรหัสผ่านสำเร็จ')));
-      if (!mounted) return;
+      // เคลียร์ OTP ทิ้ง
+      setState(() {
+        _generatedOtp = null;
+        _otpIssuedAt = null;
+        _otpSent = false;
+        _showNewPasswordFields = false;
+        _otpController.clear();
+        _newPassController.clear();
+      });
       Navigator.pop(context); // กลับหน้า login
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -116,11 +137,19 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   }
 
   @override
+  void dispose() {
+    _usernameController.dispose();
+    _otpController.dispose();
+    _newPassController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF008080), // สีพื้นหลัง
       appBar: AppBar(
-        backgroundColor: Colors.transparent, // ทำให้ AppBar โปร่งใส
+        backgroundColor: Colors.transparent, // โปร่งใส
         elevation: 0,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: Colors.white),
@@ -134,12 +163,11 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
             mainAxisAlignment: MainAxisAlignment.center,
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              // ไอคอนและข้อความสำหรับเปลี่ยนรหัสผ่าน
               const CircleAvatar(
                 radius: 50,
                 backgroundColor: Colors.white,
                 child: Icon(
-                  Icons.lock_reset, // ไอคอนที่สื่อถึงการรีเซ็ตรหัสผ่าน
+                  Icons.lock_reset,
                   size: 60,
                   color: Color(0xFF008080),
                 ),
@@ -155,16 +183,13 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
               ),
               const SizedBox(height: 48),
 
-              // ช่องกรอกชื่อผู้ใช้งาน
               _buildTextField(
                 controller: _usernameController,
                 label: 'ชื่อผู้ใช้งาน',
                 prefixIcon: Icons.person_outline,
               ),
-
               const SizedBox(height: 24),
 
-              // ปุ่มขอ OTP
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
@@ -184,68 +209,55 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                 ),
               ),
 
-              if (_showNewPasswordFields)
-                Column(
-                  children: [
-                    const SizedBox(height: 24),
-
-                    // ช่องกรอก OTP
-                    _buildTextField(
-                      controller: _otpController,
-                      label: 'รหัส OTP',
-                      prefixIcon: Icons.dialpad,
-                      keyboardType: TextInputType.number,
-                    ),
-
-                    const SizedBox(height: 24),
-
-                    // ช่องกรอกรหัสผ่านใหม่
-                    _buildTextField(
-                      controller: _newPassController,
-                      label: 'รหัสผ่านใหม่',
-                      prefixIcon: Icons.lock_outline,
-                      obscureText: !_isPasswordVisible,
-                      suffixIcon: IconButton(
-                        icon: Icon(
-                          _isPasswordVisible
-                              ? Icons.visibility
-                              : Icons.visibility_off,
-                          color: Colors.white,
-                        ),
-                        onPressed: () {
-                          setState(() {
-                            _isPasswordVisible = !_isPasswordVisible;
-                          });
-                        },
-                      ),
-                    ),
-
-                    const SizedBox(height: 24),
-
-                    // ปุ่มยืนยัน
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: _submitNewPassword,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.white,
-                          foregroundColor: const Color(0xFF008080),
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        child: const Text(
-                          'ยืนยันเปลี่ยนรหัสผ่าน',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
+              if (_showNewPasswordFields) ...[
+                const SizedBox(height: 24),
+                _buildTextField(
+                  controller: _otpController,
+                  label: 'รหัส OTP',
+                  prefixIcon: Icons.dialpad,
+                  keyboardType: TextInputType.number,
                 ),
+                const SizedBox(height: 24),
+                _buildTextField(
+                  controller: _newPassController,
+                  label: 'รหัสผ่านใหม่',
+                  prefixIcon: Icons.lock_outline,
+                  obscureText: !_isPasswordVisible,
+                  suffixIcon: IconButton(
+                    icon: Icon(
+                      _isPasswordVisible
+                          ? Icons.visibility
+                          : Icons.visibility_off,
+                      color: Colors.white,
+                    ),
+                    onPressed: () => setState(
+                      () => _isPasswordVisible = !_isPasswordVisible,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 24),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: _submitNewPassword,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.white,
+                      foregroundColor: const Color(0xFF008080),
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: const Text(
+                      'ยืนยันเปลี่ยนรหัสผ่าน',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
         ),
@@ -264,7 +276,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   }) {
     return Container(
       decoration: BoxDecoration(
-        color: const Color(0xFF2E8B57), // สีพื้นหลังของ TextField
+        color: const Color(0xFF2E8B57),
         borderRadius: BorderRadius.circular(12),
       ),
       child: TextField(

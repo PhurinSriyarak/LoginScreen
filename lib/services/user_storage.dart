@@ -1,43 +1,64 @@
-import 'dart:io';
 import 'dart:convert';
-import 'package:flutter_login_screen/services/auth_service.dart';
-import 'package:path_provider/path_provider.dart';
-import '../models/user_model.dart';
+import 'dart:io';
 
-// บริการอ่าน/เขียนไฟล์ users.json ใน Application Documents
+import 'package:flutter/foundation.dart';
+import 'package:path_provider/path_provider.dart';
+
+import '../models/user_model.dart';
+import 'auth_service.dart';
+
+/// บริการอ่าน/เขียนไฟล์ users.json ใน Application Documents
 class UserStorage {
-  // ชื่อไฟล์
   static const _fileName = 'users.json';
 
-  // คืนค่าไฟล์ path ในเครื่อง
+  // path ไฟล์ในเครื่อง
   static Future<File> _localFile() async {
     final dir = await getApplicationDocumentsDirectory();
     return File('${dir.path}/$_fileName');
   }
 
-  // โหลดข้อมูล users ทั้งหมด (คืนค่าเป็น List<UserModel>)
+  // โหลด users ทั้งหมด
   static Future<List<UserModel>> loadUsers() async {
+    final file = await _localFile();
     try {
-      final file = await _localFile();
       if (!await file.exists()) {
-        // ถ้าไฟล์ยังไม่มี ให้สร้างโครงสร้างเริ่มต้น
-        await file.writeAsString(jsonEncode({'users': []}));
+        await file.writeAsString(jsonEncode({'users': []}), flush: true);
       }
       final contents = await file.readAsString();
       final Map<String, dynamic> data = jsonDecode(contents);
       final List users = data['users'] ?? [];
-      return users.map((u) => UserModel.fromMap(u)).toList();
+      return users
+          .map((u) => UserModel.fromMap(u as Map<String, dynamic>))
+          .toList();
     } catch (e) {
-      // ถ้าโหลดไม่ได้ ให้คืนค่า empty list
+      // หาก JSON พัง/อ่านไม่ได้: สำรองไฟล์เดิม (ถ้ามี) แล้วรีเซ็ตโครงสร้าง
+      try {
+        if (await file.exists()) {
+          final backup = File(
+            '${file.path}.bad_${DateTime.now().millisecondsSinceEpoch}',
+          );
+          await file.rename(backup.path);
+        }
+        await file.writeAsString(jsonEncode({'users': []}), flush: true);
+      } catch (_) {
+        // กลืน error ระดับไฟล์ไว้เพื่อไม่ให้แอปล่ม
+      }
       return [];
     }
   }
 
-  // บันทึกรายชื่อ users ทั้งหมด (รับ List<UserModel>)
+  // บันทึก users ทั้งหมด (atomic write)
   static Future<void> saveUsers(List<UserModel> users) async {
     final file = await _localFile();
+    final tmp = File('${file.path}.tmp');
     final data = {'users': users.map((u) => u.toMap()).toList()};
-    await file.writeAsString(jsonEncode(data));
+    try {
+      await tmp.writeAsString(jsonEncode(data), flush: true);
+      await tmp.rename(file.path);
+    } catch (e) {
+      // อย่างน้อยบันทึกผิดพลาดจะไม่ทำให้ไฟล์หลักเสีย
+      // สามารถโยนหรือ log ได้ตามต้องการ
+    }
   }
 
   // หา user ตาม username
@@ -45,7 +66,7 @@ class UserStorage {
     final users = await loadUsers();
     try {
       return users.firstWhere((u) => u.username == username);
-    } catch (e) {
+    } catch (_) {
       return null;
     }
   }
@@ -70,8 +91,9 @@ class UserStorage {
     return true;
   }
 
-  // (ตัวช่วย) สร้างตัวอย่าง user ถ้ายังไม่มี — สำหรับทดสอบ
+  // dev-only: สร้างตัวอย่าง user ถ้ายังไม่มี — สำหรับทดสอบ
   static Future<void> ensureSampleUser() async {
+    if (!kDebugMode) return; // จำกัดเฉพาะ debug
     final users = await loadUsers();
     final exists = users.any((u) => u.username == 'admin');
     if (!exists) {
@@ -79,7 +101,7 @@ class UserStorage {
         username: 'admin',
         email: 'admin@example.com',
         phone: '0812345678',
-        passwordHash: AuthService.hashPassword('1234'), // รหัสตัวอย่าง 1234
+        passwordHash: AuthService.hashPassword('1234'),
       );
       users.add(sample);
       await saveUsers(users);
