@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
-import 'login_screen.dart'; // ✅ import หน้า Login
+import 'login_screen.dart';
 
 class HomeScreen extends StatelessWidget {
   final String username;
@@ -28,7 +28,7 @@ class HomeScreen extends StatelessWidget {
         actions: [
           IconButton(
             icon: const Icon(Icons.logout),
-            onPressed: () => _logout(context), // ✅ ใช้ฟังก์ชัน logout
+            onPressed: () => _logout(context),
           ),
         ],
       ),
