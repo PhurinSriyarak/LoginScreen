@@ -1,10 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import 'login_screen.dart'; // ✅ import หน้า Login
+
 class HomeScreen extends StatelessWidget {
   final String username;
 
   const HomeScreen({super.key, required this.username});
+
+  void _logout(BuildContext context) {
+    // ✅ ออกจากระบบ → ล้าง stack แล้วกลับไปหน้า Login
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const LoginScreen()),
+      (route) => false,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -18,10 +28,7 @@ class HomeScreen extends StatelessWidget {
         actions: [
           IconButton(
             icon: const Icon(Icons.logout),
-            onPressed: () {
-              // ออกจากระบบ → กลับหน้า Login
-              Navigator.pop(context);
-            },
+            onPressed: () => _logout(context), // ✅ ใช้ฟังก์ชัน logout
           ),
         ],
       ),
